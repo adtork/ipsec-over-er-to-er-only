@@ -62,21 +62,32 @@ You bought a 10 Gbps (or higher) ExpressRoute circuit and you're consuming maybe
 
 ```mermaid
 flowchart LR
-    OnPrem["🏢 On-prem CE / VPN concentrator<br/>(IKEv2 + IPsec)"]
-    MSEE["🌐 MSEE pair<br/>(ExpressRoute edge)"]
-    ERGW["ExpressRoute GW<br/>(carries BGP for private peering)"]
-    VPNGW["⚠️ VPN GW<br/>IPsec termination<br/>~10 Gbps aggregate ceiling<br/>Per-tunnel cipher-bound"]
-    VNet["VNet workloads"]
+    subgraph OP["🏢 On-prem"]
+        CE["CE / VPN concentrator<br/>(IKEv2 + IPsec)"]
+    end
 
-    OnPrem -- "IPsec tunnel (rides over ER private peering)" --> MSEE
-    MSEE --> VPNGW
-    MSEE --> ERGW
-    VPNGW --> VNet
-    ERGW -. "BGP only<br/>(not used for data)" .-> VNet
+    subgraph EDGE["🌐 Microsoft edge"]
+        MSEE["MSEE pair<br/>(ExpressRoute private peering)"]
+    end
+
+    subgraph AZ["☁️ Azure VNet"]
+        ERGW["ExpressRoute GW<br/>(transports the IPsec packets<br/>as plain IP over private peering)"]
+        VPNGW["⚠️ VPN GW<br/>IPsec termination + decrypt<br/>~10 Gbps aggregate ceiling<br/>Per-tunnel cipher-bound<br/>FastPath NOT possible"]
+        VNet["VNet workloads"]
+    end
+
+    CE -- "① IPsec packets<br/>(ESP encapsulated)" --> MSEE
+    MSEE -- "② ride the ER private<br/>peering data plane" --> ERGW
+    ERGW -- "③ IPsec still encrypted<br/>at this hop" --> VPNGW
+    VPNGW -- "④ decrypted cleartext<br/>to the VNet" --> VNet
 
     classDef cap fill:#fdd,stroke:#a33,color:#000;
+    classDef underlay fill:#eef,stroke:#669,color:#000;
     class VPNGW cap
+    class ERGW,MSEE underlay
 ```
+
+> **The stack:** Every packet rides the **ExpressRoute private-peering underlay** (cleartext IP from the MSEE's perspective — but the *payload* is an ESP-encrypted IPsec packet). The MSEE and ER GW are just forwarding ESP. The VPN GW is where the IPsec is actually terminated and decrypted, which is why **VPN GW throughput is the ceiling** — not the ER circuit, not the ER GW. And because traffic is wrapped in IPsec until it reaches the VPN GW, **FastPath cannot bypass anything**.
 
 ### After — ExpressRoute-only with FastPath
 
